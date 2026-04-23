@@ -1,0 +1,77 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <title>PW2 Exercise 1 XR</title>
+      <script type="importmap">
+    {
+      "imports": {
+        "three": "https://unpkg.com/three@0.183.0/build/three.module.js",
+        "three/addons/": "https://unpkg.com/three@0.183.0/examples/jsm/"
+      }
+    }
+  </script>
+    <style>
+      #VRButton, #ARButton {
+        position: fixed !important; 
+        top: 50% !important; 
+        left: 50% !important; 
+        bottom: auto !important; 
+        right: auto !important; 
+        transform: translate(-50%, -50%) !important;
+
+        padding: 16px 28px;
+        border-radius: 10px;
+
+        background: #111 !important;
+        color: #fff !important;
+
+        font-family: Arial, sans-serif;
+        font-size: 16px;
+        font-weight: 600;
+
+        border: 2px solid #111;
+        cursor: pointer;
+
+        box-shadow: 0 8px 20px rgba(0, 0, 0, 0.25);
+      }
+
+      #VRButton {
+        left: calc(50% - 120px) !important;
+      }
+
+      #ARButton {
+        left: calc(50% + 20px) !important;
+      }
+
+      #VRButton:hover,
+      #ARButton:hover {
+        background: #333 !important;
+      }
+  </style>
+  </head>
+  <body>
+    <script type="module">
+    import { VRButton } from 'three/addons/webxr/VRButton.js';
+    import { ARButton } from 'three/addons/webxr/ARButton.js';
+    import { main_ex1_XR } from '../script.js';
+
+    let XRMode = null;
+
+    const renderer = main_ex1_XR();
+    document.body.appendChild(renderer.domElement);
+    const vrButton = VRButton.createButton(renderer);
+    vrButton.addEventListener('click', () => {
+      renderer.userData.xrMode = 'vr';
+    });
+
+    const arButton = ARButton.createButton(renderer);
+    arButton.addEventListener('click', () => {
+      renderer.userData.xrMode = 'ar';
+    });
+
+    document.body.appendChild(vrButton);
+    document.body.appendChild(arButton);
+    </script>
+  </body>
+</html>

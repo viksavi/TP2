@@ -4,6 +4,9 @@ import { GUI } from "three/addons/libs/lil-gui.module.min.js";
 import { LineGeometry } from 'three/addons/lines/LineGeometry.js';
 import { LineMaterial } from 'three/addons/lines/LineMaterial.js';
 import { Line2 } from 'three/addons/lines/Line2.js';
+import { HTMLMesh } from 'three/addons/interactive/HTMLMesh.js';
+import { InteractiveGroup } from 'three/addons/interactive/InteractiveGroup.js';
+import { XRControllerModelFactory } from 'three/addons/webxr/XRControllerModelFactory.js';
 
 const app = {
     scene: null,
@@ -11,12 +14,15 @@ const app = {
     renderer: null,
     controls: null,
     gui: null,
+    guiMesh: null,
+    guiGroup: null,
+    xrControllers: [],
+    xrControllerGrips: [],
     video: null,
     texture: null,
     points: null,
     plane: null,
     axesGroup: null,
-
 };
 
 const COLOR_CONVERSIONS = `
@@ -257,7 +263,7 @@ const fragmentShader2 = `
     }
 `;
 
-function setupScene() {
+function setupScene(useXR = false) {
     app.container = document.createElement('div');
     document.body.appendChild(app.container);
 
@@ -273,8 +279,21 @@ function setupScene() {
     app.camera.position.set(2.5, 2.5, 20);
 
     app.renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+    app.renderer.userData = {};
     app.renderer.setPixelRatio(window.devicePixelRatio);
     app.renderer.setSize(window.innerWidth, window.innerHeight);
+
+    app.renderer.setClearColor(0x000000, 0); // to make the background transparent in AR
+
+    app.renderer.xr.addEventListener('sessionstart', () => { // to switch between AR and VR modes
+        const isAR = app.renderer.userData.xrMode === 'ar';
+        app.renderer.setClearColor(0x000000, isAR ? 0 : 1);
+    });
+
+    if (useXR) {
+        app.renderer.xr.enabled = true;
+        app.xrMode = true;
+    }
 
     app.container.appendChild(app.renderer.domElement);
 
@@ -292,6 +311,15 @@ function setupScene() {
     window.addEventListener('resize', onWindowResize);
 }
 
+function updateAxes(labels) {
+    if (app.axesGroup) {
+        app.scene.remove(app.axesGroup);
+        app.axesGroup = null;
+    }
+
+    createCoordinateBox(labels);
+}
+
 function GUI_ex1() {
     if (app.gui) {
         app.gui.destroy();
@@ -299,12 +327,9 @@ function GUI_ex1() {
 
     app.gui = new GUI();
 
-    const params = {
-        colorSpace: 'RGB',
-        density: false
-    };
+    const colorModes = ['RGB', 'HSV', 'CIEXYZ', 'CIExyY', 'CIELAB', 'CIELCH'];
 
-    const colorModes = {
+    const colorModeValues = {
         RGB: 0,
         HSV: 1,
         CIEXYZ: 2,
@@ -314,15 +339,48 @@ function GUI_ex1() {
     };
 
     const axisLabels = {
-        RGB: ['R','B','G'],
-        HSV: ['H','S','V'],
-        CIEXYZ: ['X','Y','Z'],
-        CIExyY: ['x','y','Y'],
-        CIELAB: ['L','a','b'],
-        CIELCH: ['L','C','h']
+        RGB: ['R', 'B', 'G'],
+        HSV: ['H', 'S', 'V'],
+        CIEXYZ: ['X', 'Y', 'Z'],
+        CIExyY: ['x', 'y', 'Y'],
+        CIELAB: ['L', 'a', 'b'],
+        CIELCH: ['L', 'C', 'h']
     };
 
-    const pausePlayObj = {
+    const state = {
+        colorIndex: 0,
+        colorName: 'RGB',
+        density: false,
+
+    };
+
+
+    function applyColorMode() {
+        if (!app.points) return;
+
+        state.colorName = colorModes[state.colorIndex];
+
+        app.points.material.uniforms.colorSpaceMode.value = colorModeValues[state.colorName];
+        updateAxes(axisLabels[state.colorName]);
+
+        render();
+    }
+
+    function toggleDensity() {
+        if (!app.points) return;
+
+        state.density = !state.density; 
+
+        app.points.material.uniforms.densityMode.value = state.density ? 1.0 : 0.0;
+        app.points.material.blending = state.density ? THREE.AdditiveBlending : THREE.NormalBlending;
+        app.points.material.depthWrite = state.density ? false : true;
+        app.points.material.transparent = state.density ? true : false;
+        app.points.material.needsUpdate = true;
+
+        render();
+}
+
+    const controls = {
         pausePlay() {
             if (!app.video) return;
 
@@ -332,36 +390,36 @@ function GUI_ex1() {
                 app.video.pause();
             }
         },
+
         add10sec() {
             if (!app.video) return;
             app.video.currentTime += 10;
+        },
+
+        prevColorSpace() {
+            state.colorIndex = (state.colorIndex - 1 + colorModes.length) % colorModes.length;
+            applyColorMode();
+        },
+
+        nextColorSpace() {
+            state.colorIndex = (state.colorIndex + 1) % colorModes.length;
+            applyColorMode();
+        },
+
+        toggleDensity() {
+            toggleDensity();
         }
     };
 
-    app.gui.add(pausePlayObj, 'pausePlay').name('Pause/play video');
-    app.gui.add(pausePlayObj, 'add10sec').name('Add 10 seconds');
+    app.gui.add(controls, 'pausePlay').name('Pause / Play');
+    app.gui.add(controls, 'add10sec').name('+10 sec');
 
-    app.gui.add(params, 'colorSpace', Object.keys(colorModes))
-        .name('Color Space')
-        .onChange((value) => {
-            if (!app.points) return;
+    app.gui.add(controls, 'prevColorSpace').name('Prev ColorSpace');
+    app.gui.add(controls, 'nextColorSpace').name('Next ColorSpace');
 
-            app.points.material.uniforms.colorSpaceMode.value = colorModes[value];
-            updateAxes(axisLabels[value]);
-            render();
-        });
+    app.gui.add(controls, 'toggleDensity').name('Density');
 
-    app.gui.add(params, 'density')
-        .name('Density')
-        .onChange((value) => {
-            if (!app.points) return;
-
-            app.points.material.uniforms.densityMode.value = value ? 1.0 : 0.0;
-            app.points.material.blending = value ? THREE.AdditiveBlending : THREE.NormalBlending;
-            app.points.material.depthWrite = value ? false : true;
-            app.points.material.needsUpdate = true;
-            render();
-        });
+    applyColorMode();
 }
 
 function GUI_ex2() {
@@ -745,7 +803,7 @@ export function main_ex1 () {
 }
 
 export function main_ex2 () {
-    setupScene();
+    setupScene(false);
     app.camera.rotation.x = -Math.PI; 
     app.camera.position.set(4, 4, 5);
     loadVideoSource('../video.mp4', () => {
@@ -755,4 +813,91 @@ export function main_ex2 () {
         animate();
     });
 
+}
+
+function setupXRControllers() {
+    const lineGeometry = new THREE.BufferGeometry().setFromPoints([
+        new THREE.Vector3(0, 0, 0),
+        new THREE.Vector3(0, 0, -5)
+    ]);
+
+    const lineMaterial = new THREE.LineBasicMaterial({ color: 0xffffff });
+
+    const controller1 = app.renderer.xr.getController(0);
+    controller1.add(new THREE.Line(lineGeometry, lineMaterial));
+    app.scene.add(controller1);
+
+    const controller2 = app.renderer.xr.getController(1);
+    controller2.add(new THREE.Line(lineGeometry, lineMaterial));
+    app.scene.add(controller2);
+
+    app.xrControllers = [controller1, controller2];
+
+    const controllerModelFactory = new XRControllerModelFactory();
+
+    const grip1 = app.renderer.xr.getControllerGrip(0);
+    grip1.add(controllerModelFactory.createControllerModel(grip1));
+    app.scene.add(grip1);
+
+    const grip2 = app.renderer.xr.getControllerGrip(1);
+    grip2.add(controllerModelFactory.createControllerModel(grip2));
+    app.scene.add(grip2);
+
+    app.xrControllerGrips = [grip1, grip2];
+}
+
+function GUI_ex1_XR() {
+    GUI_ex1(); // build the normal lil-gui first
+
+    app.gui.domElement.style.position = 'absolute';
+    app.gui.domElement.style.top = '0px';
+    app.gui.domElement.style.left = '0px';
+    app.gui.domElement.style.opacity = '0';
+    app.gui.domElement.style.pointerEvents = 'auto';
+    app.gui.domElement.style.zIndex = '-1';
+
+    app.guiGroup = new InteractiveGroup(app.renderer, app.camera);
+
+    if (app.xrControllers[0]) app.guiGroup.listenToXRControllerEvents(app.xrControllers[0]);
+    if (app.xrControllers[1]) app.guiGroup.listenToXRControllerEvents(app.xrControllers[1]);
+
+    app.scene.add(app.guiGroup);
+
+    app.guiMesh = new HTMLMesh(app.gui.domElement);
+
+    // place the GUI in front of the user
+    app.guiMesh.position.set(0.55, 1.4, -1.4);
+    app.guiMesh.rotation.y = -0.25;
+    app.guiMesh.scale.setScalar(2.0);
+
+    app.guiGroup.add(app.guiMesh);
+}
+
+// a separate renderer for XR
+function rendererXR() { 
+    app.renderer.setAnimationLoop(() => {
+        if (app.controls && !app.renderer.xr.isPresenting) {
+            app.controls.update();
+        }
+        render();
+    });
+}
+
+export function main_ex1_XR () {
+    setupScene(true);
+
+    setupXRControllers();
+
+    loadVideoSource('../video.mp4', () => {
+        createVideoPlane();
+        createPointCloud(app.texture);
+        createCoordinateBox();
+
+        GUI_ex1_XR();
+
+        app.video.play();
+        rendererXR();
+    });
+
+    return app.renderer;
 }
