@@ -4,19 +4,20 @@ import { GUI } from "three/addons/libs/lil-gui.module.min.js";
 import { LineGeometry } from 'three/addons/lines/LineGeometry.js';
 import { LineMaterial } from 'three/addons/lines/LineMaterial.js';
 import { Line2 } from 'three/addons/lines/Line2.js';
-import { add } from 'three/tsl';
 
-let camera, controls, scene, renderer, container;
-let plan;
+const app = {
+    scene: null,
+    camera: null,
+    renderer: null,
+    controls: null,
+    gui: null,
+    video: null,
+    texture: null,
+    points: null,
+    plane: null,
+    axesGroup: null,
 
-// VIDEO AND THE ASSOCIATED TEXTURE
-let video,videoTexture;
-
-// GUI
-let gui;
-
-let points;
-let axesGroup;
+};
 
 // where the points are located 
 const vertexShader = `
@@ -192,19 +193,51 @@ const fragmentShader = `
     }
 `;
 
-function addGUIControls() {
+function setupScene() {
+    app.container = document.createElement('div');
+    document.body.appendChild(app.container);
+
+    app.scene = new THREE.Scene();
+    app.scene.background = new THREE.Color(0x3c3b3b);
+
+    app.camera = new THREE.PerspectiveCamera(
+        60,
+        window.innerWidth / window.innerHeight,
+        0.1,
+        50
+    );
+    app.camera.position.set(2.5, 2.5, 20);
+
+    app.renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+    app.renderer.setPixelRatio(window.devicePixelRatio);
+    app.renderer.setSize(window.innerWidth, window.innerHeight);
+
+    app.container.appendChild(app.renderer.domElement);
+
+    app.controls = new OrbitControls(app.camera, app.renderer.domElement);
+    app.controls.enableRotate = true;
+    app.controls.enableDamping = true;
+    app.controls.maxDistance = 30;
+    app.controls.target.set(2.5, 2.5, 2.5);
+    app.controls.update();
+
+    const light = new THREE.DirectionalLight(0x888888, 1);
+    light.position.set(10, 7, 5);
+    app.scene.add(light);
+
+    window.addEventListener('resize', onWindowResize);
+}
+
+function GUI_ex1() {
+    if (app.gui) {
+        app.gui.destroy();
+    }
+
+    app.gui = new GUI();
+
     const params = {
         colorSpace: 'RGB',
         density: false
-    };
-
-    const axisLabels = {
-        RGB: ['R','B','G'],
-        HSV: ['H','S','V'],
-        CIEXYZ: ['X','Y','Z'],
-        CIExyY: ['x','y','Y'],
-        CIELAB: ['L','a','b'],
-        CIELCH: ['L','C','h']
     };
 
     const colorModes = {
@@ -216,123 +249,110 @@ function addGUIControls() {
         CIELCH: 5
     };
 
-    gui.add(params, 'colorSpace', ['RGB', 'HSV', 'CIEXYZ', 'CIExyY', 'CIELAB', 'CIELCH'])
-    .onChange((value) => {
-        if (!points) return;
+    const axisLabels = {
+        RGB: ['R','B','G'],
+        HSV: ['H','S','V'],
+        CIEXYZ: ['X','Y','Z'],
+        CIExyY: ['x','y','Y'],
+        CIELAB: ['L','a','b'],
+        CIELCH: ['L','C','h']
+    };
 
-        const mode = colorModes[value];
+    const pausePlayObj = {
+        pausePlay() {
+            if (!app.video) return;
 
-        points.material.uniforms.colorSpaceMode.value = mode;
+            if (app.video.paused) {
+                app.video.play();
+            } else {
+                app.video.pause();
+            }
+        },
+        add10sec() {
+            if (!app.video) return;
+            app.video.currentTime += 10;
+        }
+    };
 
-        createCoordinateBox(axisLabels[value]);
+    app.gui.add(pausePlayObj, 'pausePlay').name('Pause/play video');
+    app.gui.add(pausePlayObj, 'add10sec').name('Add 10 seconds');
 
-        render();
-    });
+    app.gui.add(params, 'colorSpace', Object.keys(colorModes))
+        .name('Color Space')
+        .onChange((value) => {
+            if (!app.points) return;
 
-    gui.add(params, 'density')
-    .name('Density mode')
-    .onChange((value) => {
-        if (!points) return;
-        points.material.uniforms.densityMode.value = value ? 1.0 : 0.0;
-        points.material.blending = value ? THREE.AdditiveBlending : THREE.NormalBlending;
-        points.material.depthWrite = value ? false : true;
-        points.material.needsUpdate = true;
-        render();
-    });
+            app.points.material.uniforms.colorSpaceMode.value = colorModes[value];
+            updateAxes(axisLabels[value]);
+            render();
+        });
 
+    app.gui.add(params, 'density')
+        .name('Density')
+        .onChange((value) => {
+            if (!app.points) return;
+
+            app.points.material.uniforms.densityMode.value = value ? 1.0 : 0.0;
+            app.points.material.blending = value ? THREE.AdditiveBlending : THREE.NormalBlending;
+            app.points.material.depthWrite = value ? false : true;
+            app.points.material.needsUpdate = true;
+            render();
+        });
 }
 
-function initEx1 () {
-	
-    container = document.createElement( 'div' );
-	document.body.appendChild( container );
-	
-	scene = new THREE.Scene(); 
-    scene.background = new THREE.Color(0x3c3b3b);
+function loadVideoSource(path, onReady) {
+    const video = document.createElement('video');
+    video.src = path;
+    video.muted = true;
+    video.loop = true;
+    video.playsInline = true;
+    video.load();
 
-    camera = new THREE.PerspectiveCamera(
-        60,
-        window.innerWidth / window.innerHeight,
-        0.1,
-        50
-    );
-    camera.position.set(2.5, 2.5, 20); 
+    video.onloadeddata = () => {
+        const texture = new THREE.VideoTexture(video);
+        texture.minFilter = THREE.NearestFilter;
+        texture.magFilter = THREE.NearestFilter;
+        texture.generateMipmaps = false;
+        texture.format = THREE.RGBAFormat;
 
-    const light = new THREE.DirectionalLight(0x888888, 1);
-    light.position.set(10, 7, 5);
-    scene.add(light);
+        app.video = video;
+        app.texture = texture;
+        app.sourceWidth = video.videoWidth;
+        app.sourceHeight = video.videoHeight;
+        app.sourceType = 'video';
 
-	renderer = new THREE.WebGLRenderer( { antialias: true, alpha: true } );
-	renderer.autoClear = false;
-	renderer.setPixelRatio( window.devicePixelRatio );
-	renderer.setSize( window.innerWidth, window.innerHeight );
-	renderer.shadowMap.enabled = false;
+        onReady();
+    };
+}
 
-	container.appendChild( renderer.domElement );
+function createVideoPlane() {
+    if (!app.texture) {
+        console.warn('Texture not ready');
+        return;
+    }
 
-	controls = new OrbitControls( camera, renderer.domElement );
-	controls.minDistance = 0.005;
-	controls.maxDistance = 30;
-	controls.enableRotate = true;
-    controls.target.set(2.5, 2.5, 2.5);
-	controls.addEventListener( 'change', render );
-	controls.update();
+    if (app.plane) {
+        app.scene.remove(app.plane);
+        app.plane.geometry.dispose();
+        app.plane.material.dispose();
+        app.plane = null;
+    }
 
-	video = document.createElement('video');
-	video.src = '../video.mp4';
-	video.load();
-	video.muted = true;
-	video.loop = true;
+    const width = app.sourceWidth;
+    const height = app.sourceHeight;
 
-	video.onloadeddata = function () 
-	{ 
-	videoTexture = new THREE.VideoTexture( video );
-	videoTexture.minFilter = THREE.NearestFilter;
-	videoTexture.magFilter = THREE.NearestFilter;
-	videoTexture.generateMipmaps = false; 
-	videoTexture.format = THREE.RGBAFormat;
-	
-	var geometry = new THREE.PlaneGeometry( 5, 5 * video.videoHeight/video.videoWidth );
-	var material = new THREE.MeshBasicMaterial( { map: videoTexture, side : THREE.DoubleSide } );
-	plan = new THREE.Mesh( geometry, material );
-	plan.receiveShadow = false;
-	plan.castShadow = false;
-    plan.position.set(2.5, 2.5, -2);
-	scene.add( plan );
+    const aspect = height / width;
 
-	var pausePlayObj =
-	{
-    	pausePlay: function () 
-    	{
-			if (!video.paused)
-			{
-				console.log ( "pause" );
-				video.pause();
-			}
-			else
-			{
-				console.log ( "play" );
-				video.play();
-			}
-		},
-		add10sec: function ()
-		{
-			video.currentTime = video.currentTime + 10;
-			console.log ( video.currentTime  );
-		}
-	};
-	
-	gui = new GUI();
-    gui.add(pausePlayObj,'pausePlay').name ('Pause/play video');
-    gui.add(pausePlayObj,'add10sec').name ('Add 10 seconds');
-    addGUIControls();
+    const geometry = new THREE.PlaneGeometry(5, 5 * aspect);
 
-	video.play();
-    createPointCloud(videoTexture);
+    const material = new THREE.MeshBasicMaterial({
+        map: app.texture,
+        side: THREE.DoubleSide
+    });
 
-	};
-	
-	window.addEventListener( 'resize', onWindowResize, false );
+    app.plane = new THREE.Mesh(geometry, material);
+    app.plane.position.set(2.5, 2.5, -2);
+    app.scene.add(app.plane);
 }
 
 function createPointCloud(texture) {
@@ -381,10 +401,9 @@ function createPointCloud(texture) {
         depthWrite: true 
     });
 
-    points = new THREE.Points(geometry, material);
-    points.frustumCulled = false;
-    scene.add(points);
-    createCoordinateBox();
+    app.points = new THREE.Points(geometry, material);
+    app.points.frustumCulled = false;
+    app.scene.add(app.points);
 }
 
 function createAxisWithTicks(start, end, color, labelText = '') {
@@ -470,7 +489,7 @@ function createCoordinateBox(labels = ['R','B','G']) {
         0x242423 // color for outer lines
     );
     gridFloor.position.set(center, 0, center);
-    scene.add( gridFloor );
+    app.scene.add( gridFloor );
     console.log ( gridFloor.position );
 
     const boxGeometry = new THREE.BoxGeometry(size, size, size);
@@ -488,13 +507,13 @@ function createCoordinateBox(labels = ['R','B','G']) {
         boxMaterial
     );
     cage.position.set(center, center, center);
-    scene.add( cage );
+    app.scene.add( cage );
 
-    if (axesGroup) {
-        scene.remove(axesGroup);
+    if (app.axesGroup) {
+        app.scene.remove(app.axesGroup);
     }
 
-    axesGroup = new THREE.Group();
+    app.axesGroup = new THREE.Group();
 
     const xAxis = createAxisWithTicks(
         new THREE.Vector3(0,0,0),
@@ -517,32 +536,40 @@ function createCoordinateBox(labels = ['R','B','G']) {
         labels[2]
     );
 
-    axesGroup.add(xAxis);
-    axesGroup.add(yAxis);
-    axesGroup.add(zAxis);
+    app.axesGroup.add(xAxis);
+    app.axesGroup.add(yAxis);
+    app.axesGroup.add(zAxis);
 
-    scene.add(axesGroup);
+    app.scene.add(app.axesGroup);
 }
 
 function render () {
-	renderer.clear();
-	renderer.render( scene, camera );
+	app.renderer.clear();
+	app.renderer.render( app.scene, app.camera );
 }
 
 function animate() {	
 	requestAnimationFrame(animate);
-	controls.update();
+	app.controls.update();
 	render();
 }
 
 function onWindowResize () {
-	camera.aspect = ( window.innerWidth / window.innerHeight);
-	camera.updateProjectionMatrix();
-	renderer.setSize( window.innerWidth, window.innerHeight );
+	app.camera.aspect = ( window.innerWidth / window.innerHeight);
+	app.camera.updateProjectionMatrix();
+	app.renderer.setSize( window.innerWidth, window.innerHeight );
 	render();
 }
 
+
 export function main_ex1 () {
-    initEx1();
-    animate();
+    setupScene();
+    loadVideoSource('../video.mp4', () => {
+        GUI_ex1();
+        createVideoPlane();
+        createPointCloud(app.texture);
+        createCoordinateBox();
+        app.video.play();
+        animate();
+    });
 }
