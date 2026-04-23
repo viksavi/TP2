@@ -19,12 +19,7 @@ const app = {
 
 };
 
-// where the points are located 
-const vertexShader = `
-    varying vec2 vUv;
-    uniform sampler2D tex;
-    uniform int colorSpaceMode;
-
+const COLOR_CONVERSIONS = `
     const vec3 D65 = vec3(0.95047, 1.00000, 1.08883); //reference white point
 
     vec3 srgbToLinear(vec3 c) {
@@ -158,6 +153,35 @@ const vertexShader = `
         }
     }
 
+    float normalizeHeight(vec3 v, int mode, int channel) {
+        float h = (channel == 0) ? v.x : (channel == 1) ? v.y : v.z;
+
+        if (mode == 0) {          // RGB
+            return h;
+        } else if (mode == 1) {   // HSV
+            return h;
+        } else if (mode == 2) {   // XYZ
+            return h;
+        } else if (mode == 3) {   // xyY
+            return h;
+        } else if (mode == 4) {   // LAB
+            if (channel == 0) return h / 100.0;
+            return (h + 128.0) / 255.0;
+        } else {                  // LCH
+            if (channel == 0) return h / 100.0;
+            if (channel == 1) return clamp(h / 150.0, 0.0, 1.0);
+            return h; // h already 0..1
+        }
+    }
+`;
+
+// where the points are located 
+const vertexShader = `
+    ${COLOR_CONVERSIONS}
+    varying vec2 vUv;
+    uniform sampler2D tex;
+    uniform int colorSpaceMode;
+
     void main() {
         vUv = uv;
 
@@ -190,6 +214,46 @@ const fragmentShader = `
             gl_FragColor = vec4(color, 0.5*(1.0 - dist*2.0));
             
         }
+    }
+`;
+
+const vertexShader2 = `
+    ${COLOR_CONVERSIONS}
+    varying vec2 vUv;
+    uniform float scaleElevation; 
+    uniform vec2 stepPixel;
+    uniform sampler2D tex;
+    uniform int colorSpaceMode;
+    uniform int channel;
+
+    void main() {
+        vUv = uv;
+        vec3 color = texture2D ( tex, vUv ).rgb;
+        vec3 converted = convertToSpace(color, colorSpaceMode);
+        float height;
+        if (channel == 0) {
+            height = converted.x;
+        } else if (channel == 1) {
+            height = converted.y;
+        } else {
+            height = converted.z;
+        }
+
+        vec3 tmp = position;
+        height = normalizeHeight(converted, colorSpaceMode, channel);
+        tmp.z = tmp.z + height*scaleElevation;
+        gl_Position = projectionMatrix * modelViewMatrix * vec4(tmp, 1.0);
+    }
+`;
+
+const fragmentShader2 = `
+    varying vec2 vUv;
+    uniform sampler2D tex;
+
+    void main() {
+        vec3 color = texture2D ( tex, vUv ).rgb;
+        gl_FragColor.rgb = color;
+        gl_FragColor.a = 1.0;
     }
 `;
 
@@ -298,6 +362,79 @@ function GUI_ex1() {
             app.points.material.needsUpdate = true;
             render();
         });
+}
+
+function GUI_ex2() {
+    if (app.gui) app.gui.destroy();
+    app.gui = new GUI();
+
+    let compCtrl = null;
+
+    const params = {
+        colorSpace: 'RGB',
+        channel: 'R'
+    };
+
+    const spaces = {
+        'RGB': { mode: 0, comps: ['R', 'G', 'B'] },
+        'HSV': { mode: 1, comps: ['H', 'S', 'V'] },
+        'CIEXYZ': { mode: 2, comps: ['X', 'Y', 'Z'] },
+        'CIExyY': { mode: 3, comps: ['x', 'y', 'Y'] },
+        'CIELAB': { mode: 4, comps: ['L', 'a', 'b'] },
+        'CIELCH': { mode: 5, comps: ['L', 'C', 'H'] }
+    };
+
+    const pausePlayObj = {
+        pausePlay() {
+            if (!app.video) return;
+
+            if (app.video.paused) {
+                app.video.play();
+            } else {
+                app.video.pause();
+            }
+        },
+        add10sec() {
+            if (!app.video) return;
+            app.video.currentTime += 10;
+        }
+    };
+
+    app.gui.add(pausePlayObj, 'pausePlay').name('Pause/play video');
+    app.gui.add(pausePlayObj, 'add10sec').name('Add 10 seconds');
+
+    // initial component
+    params.channel = spaces['RGB'].comps[0];
+    params.colorSpace = 'RGB';
+
+    function updateComps(val) {
+        const newComps = spaces[val].comps;
+        compCtrl.destroy();
+        params.channel = newComps[0];
+        compCtrl = app.gui.add(params, 'channel', newComps).name('Channel').onChange(updateShaderUniforms);
+        updateShaderUniforms();
+    }
+
+    function updateShaderUniforms() {
+        const spaceInfo = spaces[params.colorSpace];
+        app.plane.material.uniforms.colorSpaceMode.value = spaceInfo.mode;
+        app.plane.material.uniforms.channel.value = spaceInfo.comps.indexOf(params.channel);
+
+        render();
+    }
+
+    app.gui.add(params, 'colorSpace', Object.keys(spaces))
+        .name('Color Space')
+        .onChange(updateComps);
+
+    // initial channel dropdown
+    compCtrl = app.gui
+        .add(params, 'channel', spaces['RGB'].comps)
+        .name('Channel')
+        .onChange(updateShaderUniforms);
+
+    // initial sync
+    updateShaderUniforms();
 }
 
 function loadVideoSource(path, onReady) {
@@ -543,6 +680,40 @@ function createCoordinateBox(labels = ['R','B','G']) {
     app.scene.add(app.axesGroup);
 }
 
+function createElevationMap(texture) {
+    var scaleElevation = 0.75;
+    var discret = 2;
+
+    var basicElevationMaterial = new THREE.ShaderMaterial( {
+        vertexShader: vertexShader2,
+        fragmentShader: fragmentShader2,
+        uniforms: {
+            scaleElevation: { value: scaleElevation },
+            tex: { value: texture },
+            colorSpaceMode: { value: 0 },
+            channel: { value: 0 },
+            }
+    } );
+
+    var scale = 4.0;
+    var factor = texture.image.videoHeight/texture.image.videoWidth;
+    var planeGeometry = new THREE.PlaneGeometry( scale, scale*factor, texture.image.videoWidth/discret, texture.image.videoHeight/discret );  
+    app.plane = new THREE.Mesh( planeGeometry, basicElevationMaterial);
+    app.plane.material.side = THREE.DoubleSide;
+    app.plane.position.z = -0.8;
+    app.plane.rotation.z = Math.PI;
+
+    app.scene.add(app.plane);
+
+    var basicMaterial = new THREE.MeshBasicMaterial ( { map: texture } );
+    var plane2 = new THREE.Mesh( planeGeometry, basicMaterial);
+    plane2.material.side = THREE.DoubleSide;
+    plane2.position.z = -1.6;
+    plane2.rotation.z = Math.PI;
+
+    app.scene.add(plane2);
+}
+
 function render () {
 	app.renderer.clear();
 	app.renderer.render( app.scene, app.camera );
@@ -561,7 +732,6 @@ function onWindowResize () {
 	render();
 }
 
-
 export function main_ex1 () {
     setupScene();
     loadVideoSource('../video.mp4', () => {
@@ -572,4 +742,17 @@ export function main_ex1 () {
         app.video.play();
         animate();
     });
+}
+
+export function main_ex2 () {
+    setupScene();
+    app.camera.rotation.x = -Math.PI; 
+    app.camera.position.set(4, 4, 5);
+    loadVideoSource('../video.mp4', () => {
+        createElevationMap(app.texture);
+        GUI_ex2();
+        app.video.play();
+        animate();
+    });
+
 }
