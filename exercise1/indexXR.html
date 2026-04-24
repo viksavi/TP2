@@ -48,6 +48,15 @@
       #ARButton:hover {
         background: #333 !important;
       }
+
+            #ARButton {
+        font-size: 0 !important;
+    }
+
+    #ARButton::after {
+        content: "Enter MR";
+        font-size: 16px;
+    }
   </style>
   </head>
   <body>
@@ -65,9 +74,10 @@
     });
 
     const arButton = ARButton.createButton(renderer);
+    arButton.textContent = "Enter MR";
     arButton.addEventListener('click', () => {
-      renderer.userData.xrMode = 'ar';
-    });
+      renderer.userData.xrMode = 'mr';
+    }, true);
 
     document.body.appendChild(vrButton);
     document.body.appendChild(arButton);

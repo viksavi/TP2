@@ -286,11 +286,20 @@ function setupScene(useXR = false) {
     app.renderer.setPixelRatio(window.devicePixelRatio);
     app.renderer.setSize(window.innerWidth, window.innerHeight);
 
-    app.renderer.setClearColor(0x000000, 0); // to make the background transparent in AR
+    app.renderer.setClearColor(0x000000, 0); // to make the background transparent in MR
 
-    app.renderer.xr.addEventListener('sessionstart', () => { // to switch between AR and VR modes
-        const isAR = app.renderer.userData.xrMode === 'ar';
-        app.renderer.setClearColor(0x000000, isAR ? 0 : 1);
+    app.renderer.xr.addEventListener('sessionstart', () => { // to switch between MR and VR modes
+        const isMR = app.renderer.userData.xrMode === 'mr';
+
+        if (isMR) {
+            app.scene.background = null;
+            app.renderer.setClearColor(0x000000, 0);
+            app.renderer.setClearAlpha(0);
+        } else {
+            app.scene.background = new THREE.Color(0x3c3b3b);
+            app.renderer.setClearColor(0x000000, 1);
+            app.renderer.setClearAlpha(1);
+        }
     });
 
     if (useXR) {
