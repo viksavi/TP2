@@ -59,7 +59,7 @@
     let XRMode = null;
 
     const renderer = main_ex1_XR();
-    document.body.appendChild(renderer.domElement);
+    // document.body.appendChild(renderer.domElement);
     const vrButton = VRButton.createButton(renderer);
     vrButton.addEventListener('click', () => {
       renderer.userData.xrMode = 'vr';

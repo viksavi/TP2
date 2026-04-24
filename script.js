@@ -137,24 +137,24 @@ const COLOR_CONVERSIONS = `
         }
     }
 
-    vec3 normalizeMap(vec3 v, int mode) {
+    vec3 normalizeMap(vec3 v, int mode) { // normalization especially needed for LCH and LAB
         if (mode == 0) {
-            return v * 5.0;
+            return v;
         } else if (mode == 1) {
-            return v * 5.0;
+            return v;
         } else if (mode == 2) {
-            return v * 5.0; 
+            return v; 
         } else if (mode == 3) {
-            return vec3(v.x, v.y, v.z) * 5.0;
+            return vec3(v.x, v.y, v.z);
         } else if (mode == 4) {
-            float x = (v.x / 100.0) * 5.0;
-            float y = ((v.y + 128.0) / 255.0) * 5.0;
-            float z = ((v.z + 128.0) / 255.0) * 5.0;
+            float x = (v.x / 100.0);
+            float y = ((v.y + 128.0) / 255.0);
+            float z = ((v.z + 128.0) / 255.0);
             return vec3(x, y, z);
         } else {
-            float x = (v.x / 100.0) * 5.0;
-            float y = clamp(v.y / 150.0, 0.0, 1.0) * 5.0;
-            float z = v.z * 5.0;
+            float x = (v.x / 100.0);
+            float y = clamp(v.y / 150.0, 0.0, 1.0);
+            float z = v.z;
             return vec3(x, y, z);
         }
     }
@@ -176,12 +176,12 @@ const COLOR_CONVERSIONS = `
         } else {                  // LCH
             if (channel == 0) return h / 100.0;
             if (channel == 1) return clamp(h / 150.0, 0.0, 1.0);
-            return h; // h already 0..1
+            return h; // h is in range 0..1
         }
     }
 `;
 
-// where the points are located 
+// where the points are located, shader for the point cloud
 const vertexShader = `
     ${COLOR_CONVERSIONS}
     varying vec2 vUv;
@@ -201,7 +201,7 @@ const vertexShader = `
     }
 `;
 
-// how the points look like
+// how the points look like, shader for the point cloud
 const fragmentShader = `
     varying vec2 vUv;
     uniform sampler2D tex;
@@ -223,6 +223,7 @@ const fragmentShader = `
     }
 `;
 
+// shader for the elevation map
 const vertexShader2 = `
     ${COLOR_CONVERSIONS}
     varying vec2 vUv;
@@ -252,6 +253,7 @@ const vertexShader2 = `
     }
 `;
 
+// shader for the elevation map
 const fragmentShader2 = `
     varying vec2 vUv;
     uniform sampler2D tex;
@@ -263,6 +265,7 @@ const fragmentShader2 = `
     }
 `;
 
+//basic scene setups
 function setupScene(useXR = false) {
     app.container = document.createElement('div');
     document.body.appendChild(app.container);
@@ -276,7 +279,7 @@ function setupScene(useXR = false) {
         0.1,
         50
     );
-    app.camera.position.set(2.5, 2.5, 20);
+    app.camera.position.set(3, 1, 4);
 
     app.renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
     app.renderer.userData = {};
@@ -301,7 +304,7 @@ function setupScene(useXR = false) {
     app.controls.enableRotate = true;
     app.controls.enableDamping = true;
     app.controls.maxDistance = 30;
-    app.controls.target.set(2.5, 2.5, 2.5);
+    app.controls.target.set(2.5, 1, 2.5);
     app.controls.update();
 
     const light = new THREE.DirectionalLight(0x888888, 1);
@@ -311,6 +314,7 @@ function setupScene(useXR = false) {
     window.addEventListener('resize', onWindowResize);
 }
 
+// update the axis labels when changing color space
 function updateAxes(labels) {
     if (app.axesGroup) {
         app.scene.remove(app.axesGroup);
@@ -353,7 +357,6 @@ function GUI_ex1() {
         density: false,
 
     };
-
 
     function applyColorMode() {
         if (!app.points) return;
@@ -520,6 +523,7 @@ function loadVideoSource(path, onReady) {
     };
 }
 
+// play the video as a texture on a plane
 function createVideoPlane() {
     if (!app.texture) {
         console.warn('Texture not ready');
@@ -538,7 +542,7 @@ function createVideoPlane() {
 
     const aspect = height / width;
 
-    const geometry = new THREE.PlaneGeometry(5, 5 * aspect);
+    const geometry = new THREE.PlaneGeometry(2, 2 * aspect);
 
     const material = new THREE.MeshBasicMaterial({
         map: app.texture,
@@ -546,7 +550,7 @@ function createVideoPlane() {
     });
 
     app.plane = new THREE.Mesh(geometry, material);
-    app.plane.position.set(2.5, 2.5, -2);
+    app.plane.position.set(2, 1, -2);
     app.scene.add(app.plane);
 }
 
@@ -560,11 +564,12 @@ function createPointCloud(texture) {
     const positions = [];
     const uvs = [];
 
-    const scale = 5.0;
+    const scale = 1.0;
     const factor = height / width;
+    const step = 4; // to reduce the number of points for optimization
 
-    for (let i = 0; i < width; i++) {
-        for (let j = 0; j < height; j++) {
+    for (let i = 0; i < width; i+=step) {
+        for (let j = 0; j < height; j+=step) {
             const x = (i / width - 0.5) * scale;
             const y = (j / height - 0.5) * (scale * factor);
 
@@ -588,7 +593,7 @@ function createPointCloud(texture) {
         fragmentShader,
         uniforms: {
             tex: { value: texture },
-            colorSpaceMode: { value: 0 },
+            colorSpaceMode: { value: 0 }, // RGB by default
             densityMode: { value: 0.0 } // cloud of points by default
         },
         transparent: false,
@@ -598,14 +603,15 @@ function createPointCloud(texture) {
 
     app.points = new THREE.Points(geometry, material);
     app.points.frustumCulled = false;
+    app.points.position.set(-1.5, 0, -3);
     app.scene.add(app.points);
 }
 
 function createAxisWithTicks(start, end, color, labelText = '') {
     const group = new THREE.Group();
-    const tickLength = 0.2; // How far the "stick" pokes out
-    const thickWidth = 3;   // Match linewidth
-    const arrowSize = 0.3;
+    const tickLength = 0.04; // How far the "stick" pokes out
+    const thickWidth = 2;   // Match linewidth
+    const arrowSize = 0.08;
     // main axis
     const mainGeom = new LineGeometry();
     mainGeom.setPositions([start.x, start.y, start.z, end.x, end.y, end.z]);
@@ -622,12 +628,12 @@ function createAxisWithTicks(start, end, color, labelText = '') {
     const totalLength = axisVector.length();
     const direction = axisVector.clone().normalize();
 
-    for (let i = 0.5; i < totalLength; i+= 0.5) {
+    for (let i = 0.1; i < totalLength - 0.1; i+= 0.1) {
         // Calculate the center point of the tick
         const tickCenter = start.clone().add(direction.clone().multiplyScalar(i));
         
         let offset = new THREE.Vector3(0, tickLength, 0); 
-        if (Math.abs(direction.y) > 0.5) { 
+        if (Math.abs(direction.y) > 0.1) { 
             offset = new THREE.Vector3(tickLength, 0, 0);
         }
 
@@ -666,16 +672,17 @@ function createAxisWithTicks(start, end, color, labelText = '') {
     const spriteMat = new THREE.SpriteMaterial({ map: amap, transparent: true });
     const sprite = new THREE.Sprite(spriteMat);
     
-    sprite.position.copy(end.clone().add(direction.clone().multiplyScalar(0.6)));
-    sprite.scale.set(0.8, 0.8, 1);
+    sprite.position.copy(end.clone().add(direction.clone().multiplyScalar(0.15)));
+    sprite.scale.set(0.18, 0.18, 1);
     group.add(sprite);
 
     return group;
 }
 
 function createCoordinateBox(labels = ['R','B','G']) {
-    const size = 5.0;
+    const size = 1.0;
     const center = size / 2.0;
+    const offset = new THREE.Vector3(-1.5, 0, -3);
 
     const gridFloor = new THREE.GridHelper( 
         size, // total width
@@ -683,7 +690,7 @@ function createCoordinateBox(labels = ['R','B','G']) {
         0x828282, // color for center lines
         0x242423 // color for outer lines
     );
-    gridFloor.position.set(center, 0, center);
+    gridFloor.position.set(center + offset.x, offset.y, center + offset.z);
     app.scene.add( gridFloor );
     console.log ( gridFloor.position );
 
@@ -701,7 +708,7 @@ function createCoordinateBox(labels = ['R','B','G']) {
         new THREE.EdgesGeometry(boxGeometry), 
         boxMaterial
     );
-    cage.position.set(center, center, center);
+    cage.position.set(center + offset.x, center + offset.y, center + offset.z);
     app.scene.add( cage );
 
     if (app.axesGroup) {
@@ -709,24 +716,25 @@ function createCoordinateBox(labels = ['R','B','G']) {
     }
 
     app.axesGroup = new THREE.Group();
+    app.axesGroup.position.set(-1.5, 0, -3);
 
     const xAxis = createAxisWithTicks(
         new THREE.Vector3(0,0,0),
-        new THREE.Vector3(size + 0.5, 0, 0),
+        new THREE.Vector3(size + 0.1, 0, 0),
         0xff0000,
         labels[0]
     );
 
     const yAxis = createAxisWithTicks(
         new THREE.Vector3(0,0,0),
-        new THREE.Vector3(0, size + 0.5, 0),
+        new THREE.Vector3(0, size + 0.1, 0),
         0x0000ff,
         labels[1]
     );
 
     const zAxis = createAxisWithTicks(
         new THREE.Vector3(0,0,0),
-        new THREE.Vector3(0, 0, size + 0.5),
+        new THREE.Vector3(0, 0, size + 0.1),
         0x00ff00,
         labels[2]
     );
@@ -762,14 +770,6 @@ function createElevationMap(texture) {
     app.plane.rotation.z = Math.PI;
 
     app.scene.add(app.plane);
-
-    var basicMaterial = new THREE.MeshBasicMaterial ( { map: texture } );
-    var plane2 = new THREE.Mesh( planeGeometry, basicMaterial);
-    plane2.material.side = THREE.DoubleSide;
-    plane2.position.z = -1.6;
-    plane2.rotation.z = Math.PI;
-
-    app.scene.add(plane2);
 }
 
 function render () {
@@ -815,6 +815,7 @@ export function main_ex2 () {
 
 }
 
+// setup the XR controllers to be able to interact with the GUI in XR mode
 function setupXRControllers() {
     const lineGeometry = new THREE.BufferGeometry().setFromPoints([
         new THREE.Vector3(0, 0, 0),
@@ -846,6 +847,7 @@ function setupXRControllers() {
     app.xrControllerGrips = [grip1, grip2];
 }
 
+//build a special GUI for XR mode
 function GUI_ex1_XR() {
     GUI_ex1(); // build the normal lil-gui first
 
@@ -866,7 +868,7 @@ function GUI_ex1_XR() {
     app.guiMesh = new HTMLMesh(app.gui.domElement);
 
     // place the GUI in front of the user
-    app.guiMesh.position.set(0.55, 1.4, -1.4);
+    app.guiMesh.position.set(0.2, 1.4, -1.4);
     app.guiMesh.rotation.y = -0.25;
     app.guiMesh.scale.setScalar(2.0);
 
