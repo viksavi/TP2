@@ -761,15 +761,25 @@ function createElevationMap(texture) {
             }
     } );
 
-    var scale = 4.0;
+    var scale = 1.0;
     var factor = texture.image.videoHeight/texture.image.videoWidth;
     var planeGeometry = new THREE.PlaneGeometry( scale, scale*factor, texture.image.videoWidth/discret, texture.image.videoHeight/discret );  
     app.plane = new THREE.Mesh( planeGeometry, basicElevationMaterial);
     app.plane.material.side = THREE.DoubleSide;
-    app.plane.position.z = -0.8;
+    app.plane.rotation.x = -Math.PI / 2;
     app.plane.rotation.z = Math.PI;
+    app.plane.position.set(0, 1.2, -2);
 
     app.scene.add(app.plane);
+
+    var basicMaterial = new THREE.MeshBasicMaterial ( { map: texture } );
+    var plane2 = new THREE.Mesh( planeGeometry, basicMaterial);
+    plane2.material.side = THREE.DoubleSide;
+    plane2.rotation.x = -Math.PI / 2;
+    plane2.rotation.z = Math.PI;
+    plane2.position.set(0, 0.8, -2);
+
+    app.scene.add(plane2);
 }
 
 function render () {
@@ -805,7 +815,9 @@ export function main_ex1 () {
 export function main_ex2 () {
     setupScene(false);
     app.camera.rotation.x = -Math.PI; 
-    app.camera.position.set(4, 4, 5);
+    app.camera.position.set(2, 2, 1);
+    app.controls.target.set(0, 1, -3);
+    app.controls.update();
     loadVideoSource('../video.mp4', () => {
         createElevationMap(app.texture);
         GUI_ex2();
@@ -875,6 +887,151 @@ function GUI_ex1_XR() {
     app.guiGroup.add(app.guiMesh);
 }
 
+// a separate GUI for the elevation map
+function GUI_ex2_XRPanel() {
+    if (app.gui) app.gui.destroy();
+    app.gui = new GUI();
+
+    const spaces = {
+        'RGB':    { mode: 0, comps: ['R', 'G', 'B'] },
+        'HSV':    { mode: 1, comps: ['H', 'S', 'V'] },
+        'CIEXYZ': { mode: 2, comps: ['X', 'Y', 'Z'] },
+        'CIExyY': { mode: 3, comps: ['x', 'y', 'Y'] },
+        'CIELAB': { mode: 4, comps: ['L', 'a', 'b'] },
+        'CIELCH': { mode: 5, comps: ['L', 'C', 'H'] }
+    };
+
+    const spaceNames = Object.keys(spaces);
+
+    const state = {
+        spaceIndex: 0,
+        channelIndex: 0
+    };
+
+    function currentSpaceName() {
+        return spaceNames[state.spaceIndex];
+    }
+
+    function currentSpace() {
+        return spaces[currentSpaceName()];
+    }
+
+    function applyShaderUniforms() {
+        if (!app.plane) return;
+
+        const spaceInfo = currentSpace();
+
+        state.channelIndex = Math.min(
+            state.channelIndex,
+            spaceInfo.comps.length - 1
+        );
+
+        app.plane.material.uniforms.colorSpaceMode.value = spaceInfo.mode;
+        app.plane.material.uniforms.channel.value = state.channelIndex;
+
+        spaceBtn.name('Color Space: ' + currentSpaceName());
+        channelBtn.name('Channel: ' + spaceInfo.comps[state.channelIndex]);
+
+        render();
+    }
+
+    const controls = {
+        pausePlay() {
+            if (!app.video) return;
+
+            if (app.video.paused) {
+                app.video.play();
+            } else {
+                app.video.pause();
+            }
+        },
+
+        add10sec() {
+            if (!app.video) return;
+            app.video.currentTime += 10;
+        },
+
+        prevColorSpace() {
+            state.spaceIndex =
+                (state.spaceIndex - 1 + spaceNames.length) % spaceNames.length;
+
+            state.channelIndex = 0;
+            applyShaderUniforms();
+        },
+
+        nextColorSpace() {
+            state.spaceIndex =
+                (state.spaceIndex + 1) % spaceNames.length;
+
+            state.channelIndex = 0;
+            applyShaderUniforms();
+        },
+
+        prevChannel() {
+            const comps = currentSpace().comps;
+
+            state.channelIndex =
+                (state.channelIndex - 1 + comps.length) % comps.length;
+
+            applyShaderUniforms();
+        },
+
+        nextChannel() {
+            const comps = currentSpace().comps;
+
+            state.channelIndex =
+                (state.channelIndex + 1) % comps.length;
+
+            applyShaderUniforms();
+        }
+    };
+
+    app.gui.add(controls, 'pausePlay').name('Pause / Play');
+    app.gui.add(controls, 'add10sec').name('+10 sec');
+
+    const spaceBtn = app.gui
+        .add(controls, 'nextColorSpace')
+        .name('Color Space: RGB');
+
+    const channelBtn = app.gui
+        .add(controls, 'nextChannel')
+        .name('Channel: R');
+
+    applyShaderUniforms();
+}
+
+// a wrapper for the GUI ex2
+function GUI_ex2_XR() {
+    GUI_ex2_XRPanel();
+
+    app.gui.domElement.style.position = 'absolute';
+    app.gui.domElement.style.top = '0px';
+    app.gui.domElement.style.left = '0px';
+    app.gui.domElement.style.opacity = '0';
+    app.gui.domElement.style.pointerEvents = 'auto';
+    app.gui.domElement.style.zIndex = '-1';
+
+    app.guiGroup = new InteractiveGroup(app.renderer, app.camera);
+
+    if (app.xrControllers[0]) {
+        app.guiGroup.listenToXRControllerEvents(app.xrControllers[0]);
+    }
+
+    if (app.xrControllers[1]) {
+        app.guiGroup.listenToXRControllerEvents(app.xrControllers[1]);
+    }
+
+    app.scene.add(app.guiGroup);
+
+    app.guiMesh = new HTMLMesh(app.gui.domElement);
+
+    app.guiMesh.position.set(1, 1.4, -1.4);
+    app.guiMesh.rotation.y = -0.25;
+    app.guiMesh.scale.setScalar(2.0);
+
+    app.guiGroup.add(app.guiMesh);
+}
+
 // a separate renderer for XR
 function rendererXR() { 
     app.renderer.setAnimationLoop(() => {
@@ -898,6 +1055,24 @@ export function main_ex1_XR () {
         GUI_ex1_XR();
 
         app.video.play();
+        rendererXR();
+    });
+
+    return app.renderer;
+}
+
+export function main_ex2_XR () {
+    setupScene(true);
+    app.camera.rotation.x = -Math.PI; 
+    app.camera.position.set(2, 2, 1);
+
+    setupXRControllers();
+
+    loadVideoSource('../video.mp4', () => {
+        createElevationMap(app.texture);
+        GUI_ex2_XR();
+        app.video.play();
+        animate();
         rendererXR();
     });
 
