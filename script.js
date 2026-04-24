@@ -265,6 +265,75 @@ const fragmentShader2 = `
     }
 `;
 
+// shader for Lambertian shading on the elevation map
+const vertexShader3 = `
+    ${COLOR_CONVERSIONS}
+
+    varying vec2 vUv;
+    varying vec3 vColor;
+    varying float vLightFactor; // how much light hits the vertex
+
+    uniform sampler2D tex;
+    uniform float scaleElevation; 
+    uniform vec2 stepPixel;
+    uniform int colorSpaceMode;
+    uniform int channel;
+
+    uniform vec3 lightDirection;
+    uniform float id; // light intensity
+
+    float computeHeight(vec2 uv) {
+        vec3 col = texture2D(tex, uv).rgb;
+        vec3 converted = convertToSpace(col, colorSpaceMode);
+        return normalizeHeight(converted, colorSpaceMode, channel) * scaleElevation;
+    }
+
+    void main() {
+        vUv = uv;
+        vColor = texture2D(tex, vUv).rgb;
+
+        float height = computeHeight(vUv);
+
+        //offset in texture coordinates
+        float step = 0.01; 
+
+        float hRight = computeHeight(vUv + vec2(step, 0.0));
+        float hLeft  = computeHeight(vUv - vec2(step, 0.0));
+        float hUp    = computeHeight(vUv + vec2(0.0, step));
+        float hDown  = computeHeight(vUv - vec2(0.0, step));
+
+        // how steep the slope is in each direction
+        float slopeX = (hRight - hLeft) / (2.0 * step);
+        float slopeY = (hUp - hDown) / (2.0 * step);
+
+        vec3 normalVec = normalize(vec3(-slopeX, -slopeY, 1.0));
+        vec3 lightVec = normalize(lightDirection);
+
+        vLightFactor = id * max(dot(normalVec, lightVec), 0.0); // Lambertian shading output
+
+        vec3 displaced = position;
+        displaced.z += height;
+
+        gl_Position = projectionMatrix * modelViewMatrix * vec4(displaced, 1.0);
+    }
+`;
+
+const fragmentShader3 = `
+    varying vec2 vUv;
+    varying vec3 vColor;
+    varying float vLightFactor;
+
+    uniform vec3 lightColor;
+    uniform float ambientFactor;
+
+    void main() {
+        vec3 ambient = vColor * ambientFactor;
+        vec3 diffuse = vColor * lightColor * vLightFactor;
+
+        gl_FragColor = vec4(ambient + diffuse, 1.0);
+    }
+`;
+
 //basic scene setups
 function setupScene(useXR = false) {
     app.container = document.createElement('div');
@@ -755,11 +824,10 @@ function createCoordinateBox(labels = ['R','B','G']) {
     app.scene.add(app.axesGroup);
 }
 
-function createElevationMap(texture) {
-    var scaleElevation = 0.75;
-    var discret = 2;
-
-    var basicElevationMaterial = new THREE.ShaderMaterial( {
+// create the eleavtion map using height, exercise 2
+function createElevationBasicMaterial(texture) {
+    var scaleElevation = 0.5;
+    return new THREE.ShaderMaterial( {
         vertexShader: vertexShader2,
         fragmentShader: fragmentShader2,
         uniforms: {
@@ -769,11 +837,41 @@ function createElevationMap(texture) {
             channel: { value: 0 },
             }
     } );
+}
+
+function createElevationLightingMaterial(texture) {
+    var scaleElevation = 0.5;
+    return new THREE.ShaderMaterial({
+        vertexShader: vertexShader3,
+        fragmentShader: fragmentShader3,
+        uniforms: {
+            scaleElevation: { value: scaleElevation },
+            stepPixel: {
+                value: new THREE.Vector2(
+                    1 / texture.image.videoWidth,
+                    1 / texture.image.videoHeight
+                )
+            },
+            tex: { value: texture },
+            colorSpaceMode: { value: 0 },
+            channel: { value: 0 },
+            lightDirection: {
+                value: new THREE.Vector3(0.4, 0.8, 1.0).normalize()
+            },
+            id: { value: 0.8 },
+            lightColor: { value: new THREE.Vector3(1.0, 1.0, 1.0) },
+            ambientFactor: { value: 0.3 }
+        }
+    });
+}
+
+function createElevationMap(texture, ElevationMaterial) {
+    var discret = 2;
 
     var scale = 1.0;
     var factor = texture.image.videoHeight/texture.image.videoWidth;
     var planeGeometry = new THREE.PlaneGeometry( scale, scale*factor, texture.image.videoWidth/discret, texture.image.videoHeight/discret );  
-    app.plane = new THREE.Mesh( planeGeometry, basicElevationMaterial);
+    app.plane = new THREE.Mesh( planeGeometry, ElevationMaterial);
     app.plane.material.side = THREE.DoubleSide;
     app.plane.rotation.x = -Math.PI / 2;
     app.plane.rotation.z = Math.PI;
@@ -828,7 +926,22 @@ export function main_ex2 () {
     app.controls.target.set(0, 1, -3);
     app.controls.update();
     loadVideoSource('../video.mp4', () => {
-        createElevationMap(app.texture);
+        createElevationMap(app.texture, createElevationBasicMaterial(app.texture));
+        GUI_ex2();
+        app.video.play();
+        animate();
+    });
+
+}
+
+export function main_ex3 () {
+    setupScene(false);
+    app.camera.rotation.x = -Math.PI; 
+    app.camera.position.set(2, 2, 1);
+    app.controls.target.set(0, 1, -3);
+    app.controls.update();
+    loadVideoSource('../video.mp4', () => {
+        createElevationMap(app.texture, createElevationLightingMaterial(app.texture));
         GUI_ex2();
         app.video.play();
         animate();
@@ -1073,12 +1186,12 @@ export function main_ex1_XR () {
 export function main_ex2_XR () {
     setupScene(true);
     app.camera.rotation.x = -Math.PI; 
-    app.camera.position.set(2, 2, 1);
+    app.camera.position.set(2, 0.8, 1);
 
     setupXRControllers();
 
     loadVideoSource('../video.mp4', () => {
-        createElevationMap(app.texture);
+        createElevationMap(app.texture, createElevationBasicMaterial(app.texture));
         GUI_ex2_XR();
         app.video.play();
         animate();
