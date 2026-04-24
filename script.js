@@ -1200,3 +1200,21 @@ export function main_ex2_XR () {
 
     return app.renderer;
 }
+
+export function main_ex3_XR () {
+    setupScene(true);
+    app.camera.rotation.x = -Math.PI; 
+    app.camera.position.set(2, 0.8, 1);
+
+    setupXRControllers();
+
+    loadVideoSource('../video.mp4', () => {
+        createElevationMap(app.texture, createElevationLightingMaterial(app.texture));
+        GUI_ex2_XR();
+        app.video.play();
+        animate();
+        rendererXR();
+    });
+
+    return app.renderer;
+}
